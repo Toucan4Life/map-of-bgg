@@ -1,9 +1,8 @@
-use itertools::{iproduct, Itertools};
+use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::fs::File;
+use std::fs::{self, File};
 use std::hash::RandomState;
 use std::io::{prelude::*, BufReader};
 
@@ -24,94 +23,99 @@ struct Rating {
     bgg_user_name: String,
 }
 fn main() {
-    //get output
-    let output = "bgg_RatingItemDecimated.jl";
-    println!("Decimating input");
-    //decimate("bgg_RatingItem.jl", output);
-    println!("Reading new input");
-    let file = File::open(output).unwrap();
-    let ratings: Vec<Rating> = serde_json::from_reader(file).unwrap();
-    println!("Number of ratings : {}", ratings.len());
-    //Group rating by game
-    let binding = ratings
-        .iter()
-        .into_group_map_by(|rating| rating.bgg_id.clone());
+    let decimation_factor = 10;
+    let ratings_threshold = 20;
 
-    let binding: HashMap<&i32, HashSet<String>, RandomState> =
-        HashMap::from_iter(binding.iter().filter(|test| test.1.len() > 20).map(
-            |(boardgame, vec)| {
+    println!("Parsing input");
+    let ratings = parse("bgg_RatingItem.jl", decimation_factor);
+    println!("Number of ratings : {}", ratings.len());
+
+    let binding = group_rating_by_game(ratings, ratings_threshold);
+    println!(
+        "Number of games with more than {} ratings : {}",
+        ratings_threshold,
+        binding.len()
+    );
+
+    println!("Starting Jaccard");
+    let jaccard_similarities = compute_jaccard_similarities(binding);
+
+    jaccard_similarities
+        .iter()
+        .filter(|(_, _, sim)| sim.ne(&0.0))
+        .sorted_by(|a, b| b.2.partial_cmp(&a.2).unwrap())
+        .take(10)
+        .for_each(|chosen_one| println!("{}, {}, {}", chosen_one.0, chosen_one.1, chosen_one.2));
+}
+
+fn compute_jaccard_similarities(binding: HashMap<i32, HashSet<String>>) -> Vec<(i32, i32, f32)> {
+    binding
+        .keys()
+        .tuple_combinations()
+        .collect_vec()
+        .par_iter()
+        .map(|(&bg1, &bg2)| {
+            (bg1, bg2, {
+                let set1: &HashSet<String> = &binding[&bg1];
+                let set2: &HashSet<String> = &binding[&bg2];
+                (set1.intersection(set2).count() as f32) / (set1.union(set2).count() as f32)
+            })
+        })
+        .collect()
+}
+
+fn group_rating_by_game(
+    ratings: Vec<Rating>,
+    ratings_threshold: usize,
+) -> HashMap<i32, HashSet<String>, RandomState> {
+    HashMap::from_iter(
+        ratings
+            .iter()
+            .into_group_map_by(|rating| rating.bgg_id)
+            .iter()
+            .filter(|test| test.1.len() > ratings_threshold)
+            .map(|(&boardgame, vec)| {
                 (
                     boardgame,
                     HashSet::from_iter(vec.iter().map(|t| t.bgg_user_name.clone())),
                 )
-            },
-        ));
-    println!(
-        "Number of games with more than 20 ratings : {}",
-        binding.len()
-    );
-    //compute jaccard similarity
-    let binding2 = binding.keys().tuple_combinations().collect_vec();
-    println!("Number of combinations : {}", binding2.len());
-    println!("Starting Jaccard");
-    let jaccard_sets = binding2
-        .par_iter()
-        .map(|(&set1, &set2)| (set1, set2, jaccard(&binding[set1], &binding[set2])))
-        .filter(|(&set1, &set2, jac)| jac.ne(&1.0));
-    let binding = jaccard_sets.collect::<Vec<_>>();
-    let sorted_by = binding
-        .iter()
-        .sorted_by(|a, b| b.2.partial_cmp(&a.2).unwrap())
-        .take(100000)
-        .collect_vec();
-
-    sorted_by
-        .iter()
-        .take(10)
-        .for_each(|chosen_one| println!("{}, {}, {}", chosen_one.0, chosen_one.1, chosen_one.2));
-    
-    println!("Writing File");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("bgg_RatingJaccard.jl")
-        .unwrap();
-
-    serde_json::to_writer(file, &sorted_by).unwrap();
+            }),
+    )
 }
 
-fn jaccard(set1: &HashSet<String>, set2: &HashSet<String>) -> f32 {
-    (set1.intersection(&set2).count() as f32) / (set1.union(&set2).count() as f32)
-}
-
-fn decimate(input: &str, output: &str) {
+fn parse(input: &str, decimation_factor: usize) -> Vec<Rating> {
     let file = File::open(input).unwrap();
-    let reader = BufReader::new(file);
-    let decimated: Vec<_> = reader
+    BufReader::new(file)
         .lines()
         .enumerate()
-        //.par_bridge().into_par_iter()
         .filter_map(|(i, rating)| {
             let var_name = rating.unwrap();
-            if i % 10 != 0 {
-                return None;
-            }
-            match serde_json::from_str::<FullRating>(&var_name) {
-                Ok(t) => {
-                    if t.bgg_user_rating == None {
-                        return None;
+            if i % decimation_factor != 0 {
+                None
+            } else {
+                match serde_json::from_str::<FullRating>(&var_name) {
+                    Ok(t) => {
+                        t.bgg_user_rating?;
+                        Some(t)
                     }
-                    //println!("{}", var_name);
-                    return Some(t);
+                    Err(_) => {
+                        println!("{}", var_name);
+                        None
+                    }
                 }
-                Err(_) => {
-                    println!("{}", var_name);
-                    return None;
-                }
-            };
+            }
         })
-        .collect();
+        .map(|fr| Rating {
+            bgg_id: fr.bgg_id,
+            bgg_user_name: fr.bgg_user_name,
+        })
+        .collect()
+}
+
+#[test]
+fn step1_parse_input() {
+    let output = "bgg_RatingItemDecimated.jl";
+    let decimated = parse("bgg_RatingItem.jl", 100);
 
     let file = fs::OpenOptions::new()
         .create(true)
@@ -121,4 +125,28 @@ fn decimate(input: &str, output: &str) {
         .unwrap();
 
     serde_json::to_writer(file, &decimated).unwrap();
+}
+
+#[test]
+fn step2_compute_jaccard() {
+    let ratings_threshold = 20;
+    let file = File::open("bgg_RatingItemDecimated.jl").unwrap();
+    let ratings: Vec<Rating> = serde_json::from_reader(file).unwrap();
+
+    let aggregated_ratings = group_rating_by_game(ratings, ratings_threshold);
+    let jaccard_similarities = compute_jaccard_similarities(aggregated_ratings);
+    let jaccard_similarities_sorted = jaccard_similarities
+        .iter()
+        .filter(|(_, _, sim)| sim.ne(&0.0))
+        .sorted_by(|a, b| b.2.partial_cmp(&a.2).unwrap())
+        .collect_vec();
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("bgg_RatingJaccard.jl")
+        .unwrap();
+
+    serde_json::to_writer(file, &jaccard_similarities_sorted).unwrap();
 }
