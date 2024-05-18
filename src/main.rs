@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::hash::RandomState;
 use std::io::{prelude::*, BufReader};
+use deunicode::deunicode;
 
 #[derive(Serialize, Deserialize)]
 struct FullRating {
@@ -172,9 +173,17 @@ fn step3_write_dot() {
     let ratings: Vec<(i32, i32, f32)> = serde_json::from_reader(file).unwrap();
     let mut index = 0;
     let mut hashmap = HashMap::new();
+    let dictionary_label: HashMap<_, _> = csv::Reader::from_path("bgg_GameItem.csv")
+    .unwrap()
+    .records()
+    .map(|result| {
+        let record = result.unwrap();
+        (record[0].to_owned(), deunicode(&record[1]).replace(".", ""))
+    })
+    .collect();
     let mut test1 = ratings
         .iter()
-        .filter(|(_, _, weigth)| weigth > &0.04)//0.01 & 0.02OK
+        .filter(|(_, _, weigth)| weigth > &0.06) //0.01 & 0.02OK
         .map(|(a, b, w)| {
             let truea = fun_name(&mut hashmap, *a, *w, &mut index);
             let trueb = fun_name(&mut hashmap, *b, *w, &mut index);
@@ -183,7 +192,11 @@ fn step3_write_dot() {
         .collect_vec();
     let mut nodes = hashmap
         .iter()
-        .map(|(label, (id, weight))| stmt!(node!(label;attr!("weight",weight),attr!("label",label)))).collect_vec();
+        .map(|(label, (id, weight))| {
+            let name ="\"".to_owned()+dictionary_label.get(&label.to_string()).unwrap()+"\"";
+            stmt!(node!(label;attr!("weight",weight),attr!("label",name)))
+        })
+        .collect_vec();
     nodes.append(&mut test1);
     let test = Graph::DiGraph {
         id: id!("bgg_map"),
@@ -195,7 +208,7 @@ fn step3_write_dot() {
         .create(true)
         .write(true)
         .truncate(true)
-        .open("bgg_RatingJaccardfull004.dot")
+        .open("bgg_RatingJaccardfull006WithName.dot")
         .unwrap();
     let ctx = &mut PrinterContext::default();
     ctx.with_semi();
@@ -221,7 +234,7 @@ use statrs::distribution::{Continuous, ContinuousCDF, FisherSnedecor};
 
 fn jaccard_index(set1: &Vec<u32>, set2: &Vec<u32>) -> f64 {
     let intersection = set1.iter().filter(|&x| set2.contains(x)).count() as usize;
-    let union = set1.len() + set2.len() - intersection ;
+    let union = set1.len() + set2.len() - intersection;
     intersection as f64 / union as f64
 }
 //look for contengency table
@@ -250,8 +263,20 @@ fn test_is_jaccard_significant() {
     let set1 = vec![1, 2, 3, 4, 5];
     let set2 = vec![4, 5, 6, 7, 8];
     println!("{}", jaccard_pvalue(&set1, &set2));
-    
+
     let set3 = vec![1, 2, 3];
     let set4 = vec![4, 5, 6, 7, 8];
     println!("{}", jaccard_pvalue(&set3, &set4));
+}
+
+#[test]
+fn test_csv() {
+    let dictionary_label: HashMap<_, _> = csv::Reader::from_path("bgg_GameItem.csv")
+        .unwrap()
+        .records()
+        .map(|result| {
+            let record = result.unwrap();
+            (record[0].to_owned(), record[1].to_owned())
+        })
+        .collect();
 }
