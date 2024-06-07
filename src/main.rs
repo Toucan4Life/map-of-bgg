@@ -1,14 +1,15 @@
 use core::hash;
+use deunicode::deunicode;
 use graphviz_rust::dot_generator::graph;
 use itertools::Itertools;
+use quantogram::Quantogram;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::hash::RandomState;
 use std::io::{prelude::*, BufReader};
-use deunicode::deunicode;
 
 #[derive(Serialize, Deserialize)]
 struct FullRating {
@@ -174,13 +175,13 @@ fn step3_write_dot() {
     let mut index = 0;
     let mut hashmap = HashMap::new();
     let dictionary_label: HashMap<_, _> = csv::Reader::from_path("bgg_GameItem.csv")
-    .unwrap()
-    .records()
-    .map(|result| {
-        let record = result.unwrap();
-        (record[0].to_owned(), deunicode(&record[1]).replace(".", ""))
-    })
-    .collect();
+        .unwrap()
+        .records()
+        .map(|result| {
+            let record = result.unwrap();
+            (record[0].to_owned(), deunicode(&record[1]).replace(".", ""))
+        })
+        .collect();
     let mut test1 = ratings
         .iter()
         .filter(|(_, _, weigth)| weigth > &0.06) //0.01 & 0.02OK
@@ -193,7 +194,7 @@ fn step3_write_dot() {
     let mut nodes = hashmap
         .iter()
         .map(|(label, (id, weight))| {
-            let name ="\"".to_owned()+dictionary_label.get(&label.to_string()).unwrap()+"\"";
+            let name = "\"".to_owned() + dictionary_label.get(&label.to_string()).unwrap() + "\"";
             stmt!(node!(label;attr!("weight",weight),attr!("label",name)))
         })
         .collect_vec();
@@ -279,4 +280,64 @@ fn test_csv() {
             (record[0].to_owned(), record[1].to_owned())
         })
         .collect();
+}
+
+#[test]
+fn find_quantiles() {
+    let paths = fs::read_dir("./src/graphs").unwrap();
+    let files = vec![
+        fs::read_to_string("./src/graphs/0.dot").unwrap(),
+        fs::read_to_string("./src/graphs/1.dot").unwrap(),
+        fs::read_to_string("./src/graphs/2.dot").unwrap(),
+        fs::read_to_string("./src/graphs/3.dot").unwrap(),
+        fs::read_to_string("./src/graphs/4.dot").unwrap(),
+        fs::read_to_string("./src/graphs/5.dot").unwrap(),
+        fs::read_to_string("./src/graphs/6.dot").unwrap(),
+        fs::read_to_string("./src/graphs/7.dot").unwrap(),
+        fs::read_to_string("./src/graphs/8.dot").unwrap(),
+    ];
+    let score = files
+        .iter()
+        .flat_map(|string| {
+            string
+                .lines()
+                .map(|line| fun_name1(line))
+                .filter(|t| t.is_some())
+                .map(|t| t.unwrap())
+                .collect_vec()
+        })
+        .collect_vec();
+    println!("{}", score.len());
+    let mut q = Quantogram::new();
+    score.iter().for_each(|t| q.add(*t));
+    println!("10% : {}", q.quantile(0.1).unwrap());
+    println!("20% : {}", q.quantile(0.2).unwrap());
+    println!("30% : {}", q.quantile(0.3).unwrap());
+    println!("40% : {}", q.quantile(0.4).unwrap());
+    println!("50% : {}", q.quantile(0.5).unwrap());
+    println!("60% : {}", q.quantile(0.6).unwrap());
+    println!("70% : {}", q.quantile(0.7).unwrap());
+    println!("80% : {}", q.quantile(0.8).unwrap());
+    println!("90% : {}", q.quantile(0.9).unwrap());
+    let i = 0;
+}
+
+#[test]
+fn testouille() {
+    let string ="\"Pagoda\" [\"weight\"=5.834154 \"label\"=\"Pagoda\" \"size\"=21.573 \"l\"=\"7.148,7.987\" \"id\"=154003 \"rating\"=\"6.63113\" \"complexity\"=\"1.875\"]";
+
+    let result = fun_name1(string);
+
+    println!("{}", result.unwrap())
+}
+
+fn fun_name1(line: &str) -> Option<f64> {
+    let index = line.find("rating")?;
+    match line[index + 9..index + 12].parse::<f64>() {
+        Ok(value) => Some(value),
+        Err(value) => {
+            println!("{}", line[index + 9..index + 16].to_string());
+            None
+        }
+    }
 }

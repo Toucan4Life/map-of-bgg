@@ -11,6 +11,7 @@ deunicode = "1.6.0"
 dot = "0.1.4"
 graphviz-rust = "0.9.0"
 itertools = "0.12.1"
+quantogram = "0.4.4"
 rayon = "1.10.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.115"
